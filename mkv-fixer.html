@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arabic MKV Subtitle BiDi &amp; Punctuation Fixer</title>
+<script src="ffmpeg.min.js"></script>
+<script src="ffmpeg-util.min.js"></script>
+<style>
+/* ── Reset & Theme ─────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-900:#090d16;--bg-800:#111827;--bg-700:#1f293d;--bg-600:#2d3a4f;
+  --text-100:#f1f5f9;--text-200:#94a3b8;--text-300:#64748b;
+  --cyan:#06b6d4;--cyan-glow:rgba(6,182,212,.18);
+  --violet:#8b5cf6;--violet-glow:rgba(139,92,246,.2);
+  --success:#10b981;--danger:#f43f5e;--warn:#f59e0b;
+  --radius:12px;--transition:180ms ease;
+}
+html{font-size:15px}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:var(--bg-900);color:var(--text-100);
+  min-height:100vh;display:flex;flex-direction:column;line-height:1.55;
+}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg-800)}
+::-webkit-scrollbar-thumb{background:var(--bg-600);border-radius:3px}
+
+/* ── Typography & Header ───────────────────────────────────── */
+.container{max-width:1100px;margin:0 auto;padding:1.5rem 1.25rem;width:100%}
+header{text-align:center;padding:2rem 1rem 1.2rem}
+header h1{
+  font-size:clamp(1.5rem,3.2vw,2.2rem);font-weight:800;letter-spacing:-.02em;
+  background:linear-gradient(135deg,var(--cyan) 0%,#a78bfa 50%,var(--violet) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+header p{color:var(--text-200);margin-top:.4rem;font-size:.92rem}
+code{
+  background:var(--bg-700);padding:.15em .4em;border-radius:5px;
+  font-family:Consolas,monospace;font-size:.85em;color:var(--cyan);
+}
+
+/* ── Engine Status Bar ─────────────────────────────────────── */
+.engine-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  background:var(--bg-800);border:1px solid var(--bg-600);border-radius:var(--radius);
+  padding:.75rem 1.2rem;margin-bottom:1.5rem;flex-wrap:wrap;
+}
+.engine-status{display:flex;align-items:center;gap:.6rem;font-size:.85rem;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.dot.idle{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.dot.loading{background:var(--cyan);box-shadow:0 0 10px var(--cyan);animation:pulse 1s infinite}
+.dot.ready{background:var(--success);box-shadow:0 0 8px var(--success)}
+.dot.error{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.2)}}
+
+/* ── Drop Zone ─────────────────────────────────────────────── */
+.drop-zone{
+  border:2px dashed var(--bg-600);border-radius:var(--radius);
+  padding:3.2rem 2rem;text-align:center;cursor:pointer;
+  transition:all var(--transition);position:relative;margin-bottom:1.5rem;
+  background:rgba(17,24,39,.6);
+}
+.drop-zone:hover,.drop-zone.drag-over{
+  border-color:var(--cyan);background:var(--cyan-glow);
+  box-shadow:0 0 35px var(--cyan-glow);transform:translateY(-1px);
+}
+.drop-zone .icon{font-size:3.2rem;display:block;margin-bottom:.8rem;line-height:1}
+.drop-zone .title{font-size:1.15rem;font-weight:700;color:var(--text-100)}
+.drop-zone .subtitle{font-size:.86rem;color:var(--text-200);margin-top:.4rem}
+.drop-zone .hint{font-size:.78rem;color:var(--text-300);margin-top:.6rem}
+.drop-zone input{display:none}
+
+/* ── Progress Card ─────────────────────────────────────────── */
+.progress-card{
+  background:var(--bg-800);border:1px solid var(--bg-600);border-radius:var(--radius);
+  padding:1.1rem 1.4rem;margin-bottom:1.5rem;display:none;
+}
+.progress-card.show{display:block}
+.progress-header{display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:.5rem}
+.progress-bar-bg{height:8px;background:var(--bg-700);border-radius:4px;overflow:hidden}
+.progress-bar-fill{
+  height:100%;background:linear-gradient(90deg,var(--cyan),var(--violet));
+  width:0%;transition:width .2s ease;
+}
+.progress-bar-fill.indeterminate{
+  width:40%!important;animation:barSlide 1.2s infinite linear;
+}
+@keyframes barSlide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+
+/* ── Panels Grid ───────────────────────────────────────────── */
+.panels{display:grid;grid-template-columns:300px 1fr;gap:1.5rem;margin-bottom:1.5rem}
+@media(max-width:860px){.panels{grid-template-columns:1fr}}
+
+.card{
+  background:var(--bg-800);border:1px solid var(--bg-600);border-radius:var(--radius);
+  padding:1.25rem;
+}
+.card h3{
+  font-size:.95rem;font-weight:700;color:var(--text-100);margin-bottom:1rem;
+  display:flex;align-items:center;gap:.5rem;
+}
+
+/* ── Toggle Switch ─────────────────────────────────────────── */
+.toggle-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.8rem}
+.toggle-row:last-child{margin-bottom:0}
+.toggle-row label{flex:1;font-size:.84rem;color:var(--text-200);cursor:pointer}
+.toggle{position:relative;width:38px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{
+  position:absolute;inset:0;background:var(--bg-600);border-radius:22px;
+  cursor:pointer;transition:background var(--transition);
+}
+.toggle .slider::before{
+  content:'';position:absolute;width:16px;height:16px;border-radius:50%;
+  background:#fff;left:3px;top:3px;transition:transform var(--transition);
+}
+.toggle input:checked+.slider{background:var(--cyan)}
+.toggle input:checked+.slider::before{transform:translateX(16px)}
+
+/* ── Preview Panel ─────────────────────────────────────────── */
+.preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;min-height:260px}
+@media(max-width:600px){.preview-grid{grid-template-columns:1fr}}
+.preview-col{display:flex;flex-direction:column}
+.preview-col h4{
+  font-size:.76rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.5rem;
+}
+.preview-col.before h4{color:var(--danger)}
+.preview-col.after h4{color:var(--success)}
+.preview-box{
+  flex:1;background:var(--bg-900);border:1px solid var(--bg-700);border-radius:8px;
+  padding:.8rem;font-size:.86rem;line-height:1.7;max-height:360px;overflow-y:auto;
+  direction:rtl;text-align:right;white-space:pre-wrap;
+}
+.preview-line{padding:.2rem .4rem;border-radius:4px;margin-bottom:.2rem}
+.preview-line.changed{background:rgba(16,185,129,.15);border-right:3px solid var(--success)}
+.preview-line.broken{background:rgba(244,63,94,.12);border-right:3px solid var(--danger)}
+.empty-preview{
+  grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;color:var(--text-300);gap:.5rem;min-height:220px;
+}
+
+/* ── Buttons & Actions ─────────────────────────────────────── */
+.btn{
+  display:inline-flex;align-items:center;gap:.45rem;padding:.62rem 1.25rem;
+  border-radius:8px;border:none;font-size:.86rem;font-weight:700;
+  cursor:pointer;transition:all var(--transition);letter-spacing:.01em;
+}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:linear-gradient(135deg,var(--cyan),var(--violet));color:#fff}
+.btn-primary:hover:not(:disabled){box-shadow:0 0 20px var(--cyan-glow);filter:brightness(1.1)}
+.btn-secondary{background:var(--bg-700);color:var(--text-100);border:1px solid var(--bg-600)}
+.btn-secondary:hover:not(:disabled){background:var(--bg-600)}
+.btn-success{background:var(--success);color:#000}
+.btn-success:hover:not(:disabled){filter:brightness(1.15)}
+
+.action-bar{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1.5rem}
+
+/* ── Result Card ───────────────────────────────────────────── */
+.result-card{
+  background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(6,182,212,.08));
+  border:1px solid rgba(16,185,129,.35);border-radius:var(--radius);
+  padding:1.3rem;margin-bottom:1.5rem;display:none;
+}
+.result-card.show{display:block}
+.result-title{font-size:1.05rem;font-weight:700;color:var(--success);margin-bottom:.4rem}
+.result-desc{font-size:.85rem;color:var(--text-200);margin-bottom:1rem}
+
+/* ── Log Box ───────────────────────────────────────────────── */
+.log-card{background:var(--bg-800);border:1px solid var(--bg-600);border-radius:var(--radius);padding:1rem}
+.log-toggle{
+  background:none;border:none;color:var(--text-300);cursor:pointer;
+  font-size:.8rem;font-weight:600;display:flex;align-items:center;gap:.4rem;
+}
+.log-toggle:hover{color:var(--cyan)}
+.log-body{
+  margin-top:.6rem;background:var(--bg-900);border-radius:6px;padding:.8rem;
+  max-height:160px;overflow-y:auto;font-family:Consolas,monospace;
+  font-size:.73rem;color:var(--text-200);display:none;white-space:pre-wrap;
+}
+.log-body.open{display:block}
+
+/* ── Toast ─────────────────────────────────────────────────── */
+.toast-box{position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;display:flex;flex-direction:column;gap:.5rem}
+.toast{
+  background:var(--bg-700);color:var(--text-100);padding:.7rem 1.1rem;
+  border-radius:8px;font-size:.84rem;box-shadow:0 8px 30px rgba(0,0,0,.5);
+  border-left:4px solid var(--cyan);animation:toastAnim .2s ease;
+}
+.toast.ok{border-left-color:var(--success)}
+.toast.err{border-left-color:var(--danger)}
+@keyframes toastAnim{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+footer{text-align:center;padding:1.5rem;color:var(--text-300);font-size:.76rem;margin-top:auto}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container" style="padding-top:0;padding-bottom:0">
+    <h1>Arabic Subtitle BiDi &amp; Punctuation Fixer</h1>
+    <p>Drop your <strong>.mkv</strong> video or <strong>.srt/.vtt</strong> subtitle &bull; Zero server dependencies &bull; Ultra-fast client-side processing</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Engine Status -->
+  <div class="engine-bar">
+    <div class="engine-status">
+      <span class="dot idle" id="engineDot"></span>
+      <span id="engineLabel">FFmpeg WASM: Initializing engine...</span>
+    </div>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn btn-secondary" id="reloadEngineBtn" style="padding:.4rem .8rem;font-size:.78rem">↺ Reload Engine</button>
+    </div>
+  </div>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="dropZone" tabindex="0" role="button">
+    <span class="icon">🎬</span>
+    <div class="title">Drag &amp; Drop your <code>.mkv</code> or <code>.srt</code> / <code>.vtt</code> file here</div>
+    <div class="subtitle">Or click to select a file from your computer</div>
+    <div class="hint">MKV video/audio streams are copied without re-encoding (lightning fast) &bull; 100% runs in your browser</div>
+    <input type="file" id="fileInput" accept=".mkv,.mp4,.webm,.srt,.vtt">
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="progress-card" id="progressCard">
+    <div class="progress-header">
+      <span id="progressText" style="font-weight:600">Processing file...</span>
+      <span id="progressPercent" style="color:var(--cyan);font-weight:700">0%</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progressBar"></div>
+    </div>
+  </div>
+
+  <!-- Result Banner -->
+  <div class="result-card" id="resultCard">
+    <div class="result-title" id="resultTitle">✓ Processing Complete!</div>
+    <div class="result-desc" id="resultDesc">Subtitles extracted, repaired, and remuxed into your fixed MKV container.</div>
+    <div style="display:flex;gap:.8rem;flex-wrap:wrap">
+      <button class="btn btn-success" id="downloadFixedFileBtn">⬇ Download Repaired MKV</button>
+      <button class="btn btn-secondary" id="downloadSrtOnlyBtn">📄 Download Repaired .SRT Only</button>
+    </div>
+  </div>
+
+  <!-- Controls & Preview -->
+  <div class="panels">
+    <!-- Options -->
+    <div class="card">
+      <h3>⚙ Fix Settings</h3>
+      <div class="toggle-row">
+        <label for="optPunct">Fix leading inverted punctuation (<code>!</code> / <code>؟</code> / <code>...</code>)</label>
+        <div class="toggle"><input type="checkbox" id="optPunct" checked><span class="slider"></span></div>
+      </div>
+      <div class="toggle-row">
+        <label for="optQuotes">Convert ASCII quotes <code>"…"</code> &rarr; <code>«…»</code></label>
+        <div class="toggle"><input type="checkbox" id="optQuotes" checked><span class="slider"></span></div>
+      </div>
+      <div class="toggle-row">
+        <label for="optRTL">Inject RTL Embedding (<code>\u202B…\u202C</code>)</label>
+        <div class="toggle"><input type="checkbox" id="optRTL" checked><span class="slider"></span></div>
+      </div>
+
+      <div style="margin-top:1.2rem;border-top:1px solid var(--bg-600);padding-top:1rem">
+        <button class="btn btn-primary" id="reprocessBtn" style="width:100%" disabled>▶ Process File</button>
+      </div>
+    </div>
+
+    <!-- Live Preview -->
+    <div class="card">
+      <h3 style="justify-content:space-between">
+        <span>👁 Live Side-by-Side Subtitle Preview</span>
+        <span id="previewStats" style="font-size:.78rem;color:var(--text-300);font-weight:normal"></span>
+      </h3>
+      <div class="preview-grid" id="previewGrid">
+        <div class="empty-preview" id="emptyPreview">
+          <span style="font-size:2rem;opacity:.5">📝</span>
+          <span>Load an MKV or SRT file to see Before / After preview</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="log-card">
+    <button class="log-toggle" id="logToggle">📋 Technical Log <span id="logArrow">&#9654;</span></button>
+    <div class="log-body" id="logBody"></div>
+  </div>
+
+</div>
+
+<footer>Runs 100% locally in your browser &bull; Zero server uploads &bull; No cookies or trackers</footer>
+<div class="toast-box" id="toastBox"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  Arabic Subtitle BiDi & Punctuation Fixer Logic
+// ═══════════════════════════════════════════════════════════════════
+const ARABIC_CHAR_RE  = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/;
+const ARABIC_COUNT_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/g;
+const BIDI_CLEAN_RE   = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const LEAD_PUNCT_RE   = /^([!?؟.…،,;:\-–—]+)\s*/;
+
+function isArabicDominant(text) {
+  const clean = text.replace(/<[^>]+>/g, '').replace(BIDI_CLEAN_RE, '').replace(/\s+/g, '');
+  if (!clean.length) return false;
+  const total = clean.replace(/[\d\p{P}]/gu, '').length || 1;
+  const arabic = (clean.match(ARABIC_COUNT_RE) || []).length;
+  return arabic / total > 0.35;
+}
+
+function normalizeQuotes(str) {
+  let res = '', inQ = false, buf = '';
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '"' || ch === '\u201C' || ch === '\u201D') {
+      if (!inQ) { inQ = true; buf = ''; }
+      else { res += '«' + buf + '»'; inQ = false; }
+    } else {
+      if (inQ) buf += ch;
+      else res += ch;
+    }
+  }
+  if (inQ) res += '«' + buf;
+  return res;
+}
+
+function fixLeadingPunctuation(str) {
+  const trimmed = str.trim();
+  const m = trimmed.match(LEAD_PUNCT_RE);
+  if (m) {
+    const punct = m[1];
+    const rest = trimmed.slice(m[0].length);
+    if (ARABIC_CHAR_RE.test(rest)) {
+      // Reverse punctuation cluster order to maintain visual sequence at logical end
+      const revPunct = punct.split('').reverse().join('');
+      return rest + revPunct;
+    }
+  }
+  return str;
+}
+
+function fixArabicLine(line, opts) {
+  if (!isArabicDominant(line)) return line;
+
+  // Preserve HTML tag boundaries
+  let pre = '', post = '';
+  const preM = line.match(/^((?:<[^>]+>\s*)+)/);
+  if (preM) { pre = preM[1]; line = line.slice(pre.length); }
+  const postM = line.match(/((?:\s*<\/[^>]+>)+)$/);
+  if (postM) { post = postM[1]; line = line.slice(0, line.length - post.length); }
+
+  // 1. Strip stale control characters
+  line = line.replace(BIDI_CLEAN_RE, '');
+
+  // 2. Fix inverted leading punctuation
+  if (opts.fixPunct) {
+    line = fixLeadingPunctuation(line);
+  }
+
+  // 3. Normalize quotes
+  if (opts.convertQuotes) {
+    line = normalizeQuotes(line);
+  }
+
+  // 4. Inject RTL boundary markers
+  if (opts.injectRTL) {
+    line = '\u202B' + line + '\u202C';
+  }
+
+  return pre + line + post;
+}
+
+function fixSubtitleText(rawText, opts) {
+  const lines = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const result = [];
+  for (const line of lines) {
+    if (/^\d+$/.test(line.trim())) { result.push(line); continue; }
+    if (/-->/.test(line))          { result.push(line); continue; }
+    if (line.trim().startsWith('WEBVTT')) { result.push(line); continue; }
+    result.push(fixArabicLine(line, opts));
+  }
+  return result.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Application State
+// ═══════════════════════════════════════════════════════════════════
+const app = {
+  ff: null,
+  isFFReady: false,
+  currentFile: null,
+  fileBytes: null,
+  isMkv: false,
+  rawSrtText: '',
+  fixedSrtText: '',
+  outputBlob: null,
+  outputFileName: '',
+};
+
+// ═══════════════════════════════════════════════════════════════════
+//  DOM Elements
+// ═══════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const engineDot     = $('engineDot');
+const engineLabel   = $('engineLabel');
+const reloadEngineBtn = $('reloadEngineBtn');
+const dropZone      = $('dropZone');
+const fileInput     = $('fileInput');
+const progressCard  = $('progressCard');
+const progressText  = $('progressText');
+const progressPercent = $('progressPercent');
+const progressBar   = $('progressBar');
+const resultCard    = $('resultCard');
+const resultTitle   = $('resultTitle');
+const resultDesc    = $('resultDesc');
+const downloadFixedBtn = $('downloadFixedFileBtn');
+const downloadSrtBtn   = $('downloadSrtOnlyBtn');
+const optPunct      = $('optPunct');
+const optQuotes     = $('optQuotes');
+const optRTL        = $('optRTL');
+const reprocessBtn  = $('reprocessBtn');
+const previewGrid   = $('previewGrid');
+const previewStats  = $('previewStats');
+const logToggle     = $('logToggle');
+const logArrow      = $('logArrow');
+const logBody       = $('logBody');
+const toastBox      = $('toastBox');
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : '');
+  el.textContent = msg;
+  toastBox.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3800);
+}
+
+function log(msg) {
+  console.log(msg);
+  const line = document.createElement('div');
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logBody.appendChild(line);
+  logBody.scrollTop = logBody.scrollHeight;
+}
+
+let logOpen = false;
+logToggle.addEventListener('click', () => {
+  logOpen = !logOpen;
+  logBody.classList.toggle('open', logOpen);
+  logArrow.textContent = logOpen ? '▼' : '▶';
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  FFmpeg WASM Engine Initialization
+// ═══════════════════════════════════════════════════════════════════
+async function initFFmpeg() {
+  engineDot.className = 'dot loading';
+  engineLabel.textContent = 'FFmpeg WASM: Loading engine...';
+  log('Starting FFmpeg WASM initialization...');
+
+  try {
+    if (typeof FFmpegWASM === 'undefined') {
+      throw new Error('FFmpegWASM bundle not loaded. Check script imports.');
+    }
+    const { FFmpeg } = FFmpegWASM;
+    const { toBlobURL } = FFmpegUtil;
+
+    const ff = new FFmpeg();
+    ff.on('log', ({ message }) => log('FFMPEG: ' + message));
+
+    // Try loading local files first, fallback to CDN if needed
+    let coreURL, wasmURL;
+    try {
+      log('Fetching local core assets...');
+      coreURL = await toBlobURL('ffmpeg-core.js', 'text/javascript');
+      wasmURL = await toBlobURL('ffmpeg-core.wasm', 'application/wasm');
+    } catch (e) {
+      log('Local core fetch failed, falling back to CDN: ' + e.message);
+      const cdnBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+      coreURL = await toBlobURL(`${cdnBase}/ffmpeg-core.js`, 'text/javascript');
+      wasmURL = await toBlobURL(`${cdnBase}/ffmpeg-core.wasm`, 'application/wasm');
+    }
+
+    await ff.load({ coreURL, wasmURL });
+    app.ff = ff;
+    app.isFFReady = true;
+
+    engineDot.className = 'dot ready';
+    engineLabel.textContent = 'FFmpeg WASM: Ready (Client-side single-thread)';
+    log('FFmpeg WASM ready.');
+    toast('FFmpeg engine ready!', 'ok');
+    if (app.currentFile) reprocessBtn.disabled = false;
+  } catch (err) {
+    engineDot.className = 'dot error';
+    engineLabel.textContent = 'FFmpeg WASM Error: ' + err.message;
+    log('FATAL FFmpeg load error: ' + err.message);
+    toast('FFmpeg initialization failed: ' + err.message, 'err');
+  }
+}
+
+reloadEngineBtn.addEventListener('click', initFFmpeg);
+
+// ═══════════════════════════════════════════════════════════════════
+//  File Handling (Drop & Picker)
+// ═══════════════════════════════════════════════════════════════════
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+
+['dragenter', 'dragover'].forEach(ev => {
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+});
+['dragleave', 'drop'].forEach(ev => {
+  dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
+});
+
+dropZone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleSelectedFile(f);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleSelectedFile(fileInput.files[0]);
+  fileInput.value = '';
+});
+
+async function handleSelectedFile(file) {
+  app.currentFile = file;
+  app.outputBlob = null;
+  resultCard.classList.remove('show');
+  
+  const ext = file.name.split('.').pop().toLowerCase();
+  app.isMkv = ['mkv', 'mp4', 'webm'].includes(ext);
+
+  log(`Loaded file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+  toast(`Selected ${file.name}`);
+
+  // Read file into memory
+  showProgress('Reading file into memory...', 20);
+  const arrayBuffer = await file.arrayBuffer();
+  app.fileBytes = new Uint8Array(arrayBuffer);
+  hideProgress();
+
+  if (!app.isMkv) {
+    // Plain subtitle file
+    const decoder = new TextDecoder('utf-8');
+    app.rawSrtText = decoder.decode(app.fileBytes);
+    processSubtitleDirectly();
+  } else {
+    // Video container file
+    if (!app.isFFReady) {
+      toast('FFmpeg engine is still loading, please wait...', 'info');
+      reprocessBtn.disabled = true;
+      return;
+    }
+    reprocessBtn.disabled = false;
+    processMkvWorkflow();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Process Workflows
+// ═══════════════════════════════════════════════════════════════════
+function getOptions() {
+  return {
+    fixPunct: optPunct.checked,
+    convertQuotes: optQuotes.checked,
+    injectRTL: optRTL.checked,
+  };
+}
+
+// Workflow 1: Direct Subtitle (.srt / .vtt)
+function processSubtitleDirectly() {
+  const opts = getOptions();
+  app.fixedSrtText = fixSubtitleText(app.rawSrtText, opts);
+  
+  const baseName = app.currentFile.name.replace(/\.[^.]+$/, '');
+  const outName = `${baseName}_fixed.srt`;
+  app.outputFileName = outName;
+  app.outputBlob = new Blob([app.fixedSrtText], { type: 'text/plain;charset=utf-8' });
+
+  renderPreview(app.rawSrtText, app.fixedSrtText);
+
+  resultTitle.textContent = '✓ Subtitle Repaired Successfully!';
+  resultDesc.textContent = `Repaired Arabic bidirectional flow & punctuation in ${app.currentFile.name}.`;
+  downloadFixedBtn.textContent = '⬇ Download Repaired Subtitle (.srt)';
+  downloadSrtBtn.style.display = 'none';
+  resultCard.classList.add('show');
+  toast('Subtitle fixed!', 'ok');
+}
+
+// Workflow 2: MKV Video Container
+async function processMkvWorkflow() {
+  if (!app.isFFReady || !app.fileBytes) return;
+
+  reprocessBtn.disabled = true;
+  resultCard.classList.remove('show');
+  const ff = app.ff;
+  const fileName = app.currentFile.name;
+  const inputVfsName = 'input.mkv';
+
+  try {
+    showProgress('Writing video to virtual memory...', 20);
+    await ff.writeFile(inputVfsName, app.fileBytes);
+
+    showProgress('Extracting Arabic subtitle track...', 40);
+    log('Extracting subtitle stream from container...');
+    
+    // Extract subtitle stream 0:s:0 (or first subtitle) to SRT
+    try {
+      await ff.exec(['-i', inputVfsName, '-map', '0:s:0', '-y', 'extracted.srt']);
+    } catch (e) {
+      throw new Error('No subtitle stream could be extracted from this MKV.');
+    }
+
+    const srtBytes = await ff.readFile('extracted.srt');
+    if (!srtBytes || !srtBytes.length) {
+      throw new Error('Extracted subtitle was empty or could not be read.');
+    }
+
+    const decoder = new TextDecoder('utf-8');
+    app.rawSrtText = decoder.decode(srtBytes);
+    log(`Successfully extracted subtitle: ${app.rawSrtText.length} characters.`);
+
+    // Apply BiDi & Punctuation fixes
+    showProgress('Applying Arabic BiDi & Punctuation fixes...', 60);
+    const opts = getOptions();
+    app.fixedSrtText = fixSubtitleText(app.rawSrtText, opts);
+
+    renderPreview(app.rawSrtText, app.fixedSrtText);
+
+    // Write fixed SRT back to virtual FS
+    await ff.writeFile('fixed.srt', app.fixedSrtText);
+
+    // Remux video & audio (copy, no encode) + new fixed subtitle
+    showProgress('Remuxing fixed MKV (stream copy)...', 80);
+    log('Remuxing: video & audio copied verbatim, fixed subtitle replaced...');
+
+    const baseName = fileName.replace(/\.[^.]+$/, '');
+    const outVfsName = 'output_fixed.mkv';
+
+    await ff.exec([
+      '-i', inputVfsName,
+      '-i', 'fixed.srt',
+      '-map', '0:v',
+      '-map', '0:a?',
+      '-map', '1:0',
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-c:s', 'srt',
+      '-metadata:s:s:0', 'language=ara',
+      '-metadata:s:s:0', 'title=Arabic (BiDi Fixed)',
+      '-disposition:s:0', 'default',
+      '-y', outVfsName
+    ]);
+
+    showProgress('Preparing download...', 95);
+    const outputData = await ff.readFile(outVfsName);
+    app.outputBlob = new Blob([outputData], { type: 'video/x-matroska' });
+    app.outputFileName = `${baseName}_fixed.mkv`;
+
+    // Cleanup virtual filesystem
+    try {
+      await ff.deleteFile(inputVfsName);
+      await ff.deleteFile('extracted.srt');
+      await ff.deleteFile('fixed.srt');
+      await ff.deleteFile(outVfsName);
+    } catch (_) {}
+
+    hideProgress();
+
+    const mbSize = (app.outputBlob.size / 1024 / 1024).toFixed(2);
+    resultTitle.textContent = '✓ Repaired MKV Ready!';
+    resultDesc.textContent = `Fixed subtitle embedded & remuxed into ${app.outputFileName} (${mbSize} MB). Direct stream copy ensured zero video/audio quality loss.`;
+    downloadFixedBtn.textContent = '⬇ Download Repaired MKV';
+    downloadSrtBtn.style.display = 'inline-flex';
+    resultCard.classList.add('show');
+    toast('MKV successfully repaired!', 'ok');
+  } catch (err) {
+    hideProgress();
+    log('Processing error: ' + err.message);
+    toast('Error: ' + err.message, 'err');
+  } finally {
+    reprocessBtn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Preview Renderer
+// ═══════════════════════════════════════════════════════════════════
+function renderPreview(raw, fixed) {
+  const getDialogue = txt => {
+    return txt.split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !/^\d+$/.test(l) && !/-->/.test(l) && !l.startsWith('WEBVTT'))
+      .slice(0, 25);
+  };
+
+  const rawLines = getDialogue(raw);
+  const fixedLines = getDialogue(fixed);
+
+  let changedCount = 0;
+  let beforeHtml = '', afterHtml = '';
+
+  for (let i = 0; i < Math.max(rawLines.length, fixedLines.length); i++) {
+    const b = rawLines[i] || '';
+    const a = fixedLines[i] || '';
+    const isDiff = b !== a;
+    if (isDiff) changedCount++;
+
+    beforeHtml += `<div class="preview-line ${isDiff ? 'broken' : ''}">${escapeHtml(b)}</div>`;
+    afterHtml  += `<div class="preview-line ${isDiff ? 'changed' : ''}">${escapeHtml(a)}</div>`;
+  }
+
+  previewGrid.innerHTML = `
+    <div class="preview-col before">
+      <h4>⛔ Before (Broken Inverted Punctuation)</h4>
+      <div class="preview-box">${beforeHtml}</div>
+    </div>
+    <div class="preview-col after">
+      <h4>✅ After (Repaired BiDi Layout)</h4>
+      <div class="preview-box">${afterHtml}</div>
+    </div>
+  `;
+
+  previewStats.textContent = `${changedCount} line(s) repaired`;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Downloads
+// ═══════════════════════════════════════════════════════════════════
+downloadFixedBtn.addEventListener('click', () => {
+  if (!app.outputBlob) return;
+  triggerDownload(app.outputBlob, app.outputFileName);
+});
+
+downloadSrtBtn.addEventListener('click', () => {
+  if (!app.fixedSrtText) return;
+  const srtBlob = new Blob([app.fixedSrtText], { type: 'text/plain;charset=utf-8' });
+  const name = (app.currentFile ? app.currentFile.name.replace(/\.[^.]+$/, '') : 'subtitles') + '_fixed.srt';
+  triggerDownload(srtBlob, name);
+});
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 300);
+  toast(`Downloading ${filename}`, 'ok');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Progress Helpers
+// ═══════════════════════════════════════════════════════════════════
+function showProgress(text, pct = 0) {
+  progressCard.classList.add('show');
+  progressText.textContent = text;
+  if (pct > 0) {
+    progressBar.classList.remove('indeterminate');
+    progressBar.style.width = pct + '%';
+    progressPercent.textContent = pct + '%';
+  } else {
+    progressBar.classList.add('indeterminate');
+    progressPercent.textContent = '';
+  }
+}
+
+function hideProgress() {
+  progressCard.classList.remove('show');
+  progressBar.style.width = '0%';
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Settings Toggles & Reprocess
+// ═══════════════════════════════════════════════════════════════════
+[optPunct, optQuotes, optRTL].forEach(el => {
+  el.addEventListener('change', () => {
+    if (app.rawSrtText) {
+      if (app.isMkv) processMkvWorkflow();
+      else processSubtitleDirectly();
+    }
+  });
+});
+
+reprocessBtn.addEventListener('click', () => {
+  if (app.isMkv) processMkvWorkflow();
+  else if (app.currentFile) processSubtitleDirectly();
+});
+
+// Auto-start FFmpeg on page load
+initFFmpeg();
+</script>
+</body>
+</html>

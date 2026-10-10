@@ -1,0 +1,11 @@
+# Dependencies & caches
+node_modules/
+__pycache__/
+*.pyc
+
+# Local runtime logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db

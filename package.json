@@ -1,0 +1,24 @@
+{
+  "name": "arabic-subtitle-bidi-fixer",
+  "version": "1.0.0",
+  "description": "Client-side Arabic Subtitle BiDi and Punctuation Fixer for MKV, MP4, and SRT/VTT files.",
+  "scripts": {
+    "start": "serve .",
+    "dev": "serve ."
+  },
+  "keywords": [
+    "arabic",
+    "subtitles",
+    "bidi",
+    "mkv",
+    "srt",
+    "vtt",
+    "ffmpeg",
+    "wasm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}
